@@ -1,0 +1,19 @@
+safedisk
+Copyright 2026 PolitePixels Limited
+
+This product includes software developed by PolitePixels Limited
+(https://github.com/piko-sh/safedisk).
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+these files except in compliance with the License. You may obtain a copy of the
+License in the accompanying LICENSE file or at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+safedisk was originally developed as part of the Piko web framework
+(https://github.com/piko-sh/piko), which uses it as the security boundary for
+every filesystem operation in its runtime, build pipeline and tooling.
+
+This project stands against fascism, authoritarianism, and all forms of
+oppression. We built this to help people, not to enable those who would strip
+others of their rights and dignity.
