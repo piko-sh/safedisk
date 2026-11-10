@@ -1200,6 +1200,72 @@ func TestOSSandbox_Rename_DestinationEscapeBlocked(t *testing.T) {
 	}
 }
 
+func TestOSSandbox_Rename_ThroughSymlinkedDirectoryIsBlocked(t *testing.T) {
+	t.Parallel()
+
+	sandboxDirectory := t.TempDir()
+	outsideDirectory := t.TempDir()
+	require.NoError(t, os.Symlink(outsideDirectory, filepath.Join(sandboxDirectory, "link")))
+
+	sandbox, err := NewSandbox(sandboxDirectory, ModeReadWrite)
+	require.NoError(t, err)
+	defer func() { _ = sandbox.Close() }()
+
+	require.NoError(t, sandbox.WriteFile("victim.txt", []byte("sensitive"), 0o644))
+
+	err = sandbox.Rename("victim.txt", "link/stolen.txt")
+	require.Error(t, err, "a rename must not move a file out through a symlinked directory")
+
+	_, statErr := os.Stat(filepath.Join(outsideDirectory, "stolen.txt"))
+	require.True(t, os.IsNotExist(statErr), "nothing may appear outside the sandbox")
+
+	content, readErr := sandbox.ReadFile("victim.txt")
+	require.NoError(t, readErr)
+	require.Equal(t, "sensitive", string(content))
+}
+
+func TestOSSandbox_Rename_FromSymlinkedDirectoryIsBlocked(t *testing.T) {
+	t.Parallel()
+
+	sandboxDirectory := t.TempDir()
+	outsideDirectory := t.TempDir()
+	outsideFile := filepath.Join(outsideDirectory, "secret.txt")
+	require.NoError(t, os.WriteFile(outsideFile, []byte("outside"), 0o600))
+	require.NoError(t, os.Symlink(outsideDirectory, filepath.Join(sandboxDirectory, "link")))
+
+	sandbox, err := NewSandbox(sandboxDirectory, ModeReadWrite)
+	require.NoError(t, err)
+	defer func() { _ = sandbox.Close() }()
+
+	err = sandbox.Rename("link/secret.txt", "inside.txt")
+	require.Error(t, err, "a rename must not move a file in through a symlinked directory")
+
+	content, readErr := os.ReadFile(outsideFile)
+	require.NoError(t, readErr, "the outside file must stay where it was")
+	require.Equal(t, "outside", string(content))
+
+	_, statErr := os.Lstat(filepath.Join(sandboxDirectory, "inside.txt"))
+	require.True(t, os.IsNotExist(statErr))
+}
+
+func TestOSSandbox_Rename_IntoSubdirectory(t *testing.T) {
+	t.Parallel()
+
+	sandboxDirectory := t.TempDir()
+	sandbox, err := NewSandbox(sandboxDirectory, ModeReadWrite)
+	require.NoError(t, err)
+	defer func() { _ = sandbox.Close() }()
+
+	require.NoError(t, sandbox.MkdirAll("nested/deeper", 0o755))
+	require.NoError(t, sandbox.WriteFile("file.txt", []byte("data"), 0o644))
+
+	require.NoError(t, sandbox.Rename("file.txt", "nested/deeper/file.txt"))
+
+	content, err := sandbox.ReadFile("nested/deeper/file.txt")
+	require.NoError(t, err)
+	require.Equal(t, "data", string(content))
+}
+
 func TestOSSandbox_Rename_SourceEscapeBlocked(t *testing.T) {
 	t.Parallel()
 

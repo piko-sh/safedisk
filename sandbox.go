@@ -464,10 +464,10 @@ func (s *osSandbox) RemoveAll(path string) error {
 
 // Rename moves a file or directory to a new path within the sandbox.
 //
-// Uses absolute paths internally but both must be within the sandbox. The source is
-// validated via os.Root; the destination is validated by checking that the resolved
-// absolute path remains under the sandbox root, since os.Root does not provide a Rename
-// method.
+// Both paths are resolved by os.Root, so neither may leave the sandbox through "..", an
+// absolute path or a symbolic link, including a symlinked directory inside the sandbox
+// that points outside it. Paths that escape lexically are refused first with a clearer
+// error.
 //
 // Takes oldpath (string) which is the current path of the file or directory.
 // Takes newpath (string) which is the destination path.
@@ -482,17 +482,14 @@ func (s *osSandbox) Rename(oldpath, newpath string) error {
 	cleanOld := cleanPath(oldpath)
 	cleanNew := cleanPath(newpath)
 
-	absOld := filepath.Join(s.rootPath, cleanOld)
-	absNew := filepath.Join(s.rootPath, cleanNew)
-
-	if !isWithinRoot(s.rootPath, absOld) {
+	if !isWithinRoot(s.rootPath, filepath.Join(s.rootPath, cleanOld)) {
 		return fmt.Errorf("safedisk: source path %q escapes sandbox root", oldpath)
 	}
-	if !isWithinRoot(s.rootPath, absNew) {
+	if !isWithinRoot(s.rootPath, filepath.Join(s.rootPath, cleanNew)) {
 		return fmt.Errorf("safedisk: destination path %q escapes sandbox root", newpath)
 	}
 
-	if err := os.Rename(absOld, absNew); err != nil {
+	if err := s.root.Rename(cleanOld, cleanNew); err != nil {
 		return fmt.Errorf("safedisk: rename %q to %q: %w", cleanOld, cleanNew, err)
 	}
 	return nil
