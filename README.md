@@ -5,8 +5,8 @@
 Every path an application opens from configuration, user input or a build manifest is a chance
 for `../` traversal, a symlink that points outside the intended directory, or a race between
 checking a path and opening it. `safedisk` puts each directory an application touches behind a
-`Sandbox` rooted with `os.Root`, so the kernel (openat2 with `RESOLVE_BENEATH` on Linux) refuses
-any access that would leave it. A `Factory` restricts which directories may be sandboxed at all.
+`Sandbox` rooted with `os.Root`, which refuses any access that would leave it. A `Factory`
+restricts which directories may be sandboxed at all.
 
 Module `piko.sh/safedisk`. Go 1.27. Apache-2.0. No dependencies outside the standard library.
 
@@ -63,16 +63,22 @@ func main() {
 
 - **`Sandbox`**: an `os`-like API (`Open`, `ReadFile`, `ReadFileLimit`, `WriteFile`,
   `WriteFileAtomic`, `OpenFile`, `Create`, `Mkdir(All)`, `Remove(All)`, `Rename`, `Chmod`,
-  `Stat`, `Lstat`, `ReadDir`, `WalkDir`, `CreateTemp`, `MkdirTemp`) confined to one directory,
-  in `ModeReadOnly` or `ModeReadWrite`.
+  `Chtimes`, `Chown`, `Lchown`, `Symlink`, `Link`, `Readlink`, `Stat`, `Lstat`, `ReadDir`, `WalkDir`,
+  `CreateTemp`, `MkdirTemp`) confined to one directory, in `ModeReadOnly` or `ModeReadWrite`.
+- **Sub-sandboxes and `fs.FS`**: `OpenRoot` opens a directory as a sandbox of its own, with the
+  same mode or a stricter one, and `FS` gives a read-only `fs.FS` view.
 - **`Factory`** (`NewFactory`, `NewCLIFactory`): creates sandboxes only for allowed paths, with
   the working directory always permitted.
+- **Optional hardening**: `WithRequireSingleLink` rejects files with multiple hard links and
+  `WithNoSymlinks` rejects symbolic-link traversal. Both are off by default; use the
+  `WithOptions` constructors or the matching `FactoryConfig` fields. The symlink check is
+  not atomic; see the [option documentation](options.go) for details.
 - **Bounded reads**: `ReadFile` caps at `DefaultReadFileMaxBytes` (256 MiB) and
   `ReadFileLimit` takes an explicit cap, both returning `ErrFileExceedsLimit` when exceeded.
 - **Atomic writes**: `WriteFileAtomic` writes a temporary file and renames it within the
   sandbox.
 - **No-op mode**: `FactoryConfig.Enabled = false` (or `NewNoOpSandbox`) gives the same API
-  without kernel-level protection, for development only.
+  with only lexical path checks, for development only.
 - **Test doubles**: `MockSandbox` and `MockFileHandle` keep files in memory.
 
 All `Sandbox` methods and the `Factory` are safe for concurrent use. Individual file handles

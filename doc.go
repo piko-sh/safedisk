@@ -16,24 +16,27 @@
 // oppression. We built this to empower people, not to enable those who would
 // strip others of their rights and dignity.
 
-// Package safedisk provides sandboxed filesystem operations using Go 1.24's os.Root.
+// Package safedisk provides sandboxed filesystem operations using os.Root.
 //
-// Acts as a security boundary for an application's filesystem operations. Prevents path
-// traversal attacks by restricting file access to configured directories using
-// kernel-level protection (openat2 with RESOLVE_BENEATH on Linux), guarding against
-// symlink escapes and TOCTOU race conditions as well.
+// Acts as a boundary for an application's filesystem operations by confining each
+// [Sandbox] to one directory. Paths are resolved by os.Root, which refuses access outside
+// the root, including through symbolic links.
 //
 // Sandboxes can be created in read-only or read-write mode. The [Factory] restricts
 // sandboxes to allowed paths, with the current working directory always implicitly
 // permitted. Atomic file writes are supported via CreateTemp followed by Rename within
 // the same sandbox.
 //
+// Optional [WithRequireSingleLink] and [WithNoSymlinks] settings reject files with multiple
+// hard links and symbolic-link traversal. Both are off by default and can be set through
+// [FactoryConfig] or the constructors that accept options. The symlink check is not atomic.
+//
 // All [Sandbox] methods and the [Factory] are safe for concurrent use. Individual [File]
 // handles should not be shared without external synchronisation, consistent with standard
 // [os.File] behaviour.
 //
 // When Enabled is false in [FactoryConfig], the factory creates no-op sandboxes that
-// provide the same API without kernel-level protection. Do not use no-op mode in
+// provide the same API with only lexical path checks. Do not use no-op mode in
 // production where security is required.
 //
 // Failures to close a handle after an operation has finished are reported through

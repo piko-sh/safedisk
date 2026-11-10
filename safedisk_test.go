@@ -84,37 +84,37 @@ func TestNoOpSandbox_ReadOnly(t *testing.T) {
 	assert.True(t, sandbox.IsReadOnly())
 
 	_, err = sandbox.Create("test.txt")
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.WriteFile("test.txt", []byte("content"), 0644)
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.Mkdir("subdir", 0755)
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.MkdirAll("a/b/c", 0755)
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.Remove("file.txt")
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.RemoveAll("dir")
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.Rename("old", "new")
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.Chmod("file.txt", 0644)
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	_, err = sandbox.CreateTemp(".", "test-*")
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	_, err = sandbox.MkdirTemp(".", "tmp-*")
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	_, err = sandbox.OpenFile("test.txt", os.O_WRONLY|os.O_CREATE, 0644)
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	_ = sandbox.Close()
 }
@@ -129,28 +129,28 @@ func TestNoOpSandbox_Closed(t *testing.T) {
 	require.NoError(t, sandbox.Close())
 
 	_, err = sandbox.Open("file.txt")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	_, err = sandbox.ReadFile("file.txt")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	_, err = sandbox.Stat("file.txt")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	_, err = sandbox.Lstat("file.txt")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	_, err = sandbox.ReadDir(".")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	err = sandbox.WalkDir(".", func(path string, d fs.DirEntry, err error) error { return nil })
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	_, err = sandbox.Create("file.txt")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	err = sandbox.WriteFile("file.txt", []byte("data"), 0644)
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 }
 
 func TestNoOpSandbox_PathEscape(t *testing.T) {
@@ -401,13 +401,13 @@ func TestOSSandbox_ReadOnly(t *testing.T) {
 	assert.True(t, sandbox.IsReadOnly())
 
 	_, err = sandbox.Create("test.txt")
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.WriteFile("test.txt", []byte("content"), 0644)
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 
 	err = sandbox.Mkdir("subdir", 0755)
-	assert.ErrorIs(t, err, errReadOnly)
+	assert.ErrorIs(t, err, ErrReadOnly)
 }
 
 func TestOSSandbox_Closed(t *testing.T) {
@@ -421,10 +421,10 @@ func TestOSSandbox_Closed(t *testing.T) {
 	require.NoError(t, sandbox.Close())
 
 	_, err = sandbox.Open("file.txt")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 
 	_, err = sandbox.Create("file.txt")
-	assert.ErrorIs(t, err, errClosed)
+	assert.ErrorIs(t, err, ErrClosed)
 }
 
 func TestOSSandbox_ReadWriteFile(t *testing.T) {
@@ -791,7 +791,7 @@ func TestFactory_Create_NotAllowed(t *testing.T) {
 
 	_, err = factory.Create("test", "/some/other/path", ModeReadOnly)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, errPathNotAllowed)
+	assert.ErrorIs(t, err, ErrPathNotAllowed)
 }
 
 func TestFactory_MustCreate_Panics(t *testing.T) {
@@ -1390,7 +1390,7 @@ func TestOSSandbox_WriteFileAtomic(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.WriteFileAtomic("test.txt", []byte("data"), 0644)
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 }
 
@@ -1466,7 +1466,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.Chmod("file.txt", 0600)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("write file after close", func(t *testing.T) {
@@ -1477,7 +1477,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.WriteFile("file.txt", []byte("data"), 0644)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("write file atomic after close", func(t *testing.T) {
@@ -1488,7 +1488,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.WriteFileAtomic("file.txt", []byte("data"), 0644)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("mkdir after close", func(t *testing.T) {
@@ -1499,7 +1499,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.Mkdir("dir", 0755)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("mkdir all after close", func(t *testing.T) {
@@ -1510,7 +1510,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.MkdirAll("a/b/c", 0755)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("remove after close", func(t *testing.T) {
@@ -1521,7 +1521,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.Remove("file.txt")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("remove all after close", func(t *testing.T) {
@@ -1532,7 +1532,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.RemoveAll("dir")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("rename after close", func(t *testing.T) {
@@ -1543,7 +1543,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.Rename("old", "new")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("create temp after close", func(t *testing.T) {
@@ -1554,7 +1554,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		_, err = sandbox.CreateTemp(".", "test-*")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("mkdir temp after close", func(t *testing.T) {
@@ -1565,7 +1565,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		_, err = sandbox.MkdirTemp(".", "test-*")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("openfile after close", func(t *testing.T) {
@@ -1576,7 +1576,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		_, err = sandbox.OpenFile("file.txt", os.O_RDONLY, 0)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("readdir after close", func(t *testing.T) {
@@ -1587,7 +1587,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		_, err = sandbox.ReadDir(".")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("lstat after close", func(t *testing.T) {
@@ -1598,7 +1598,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		_, err = sandbox.Lstat("file.txt")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("stat after close", func(t *testing.T) {
@@ -1609,7 +1609,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		_, err = sandbox.Stat("file.txt")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("readfile after close", func(t *testing.T) {
@@ -1620,7 +1620,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		_, err = sandbox.ReadFile("file.txt")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("walkdir after close", func(t *testing.T) {
@@ -1631,7 +1631,7 @@ func TestOSSandbox_Closed_Extended(t *testing.T) {
 		require.NoError(t, sandbox.Close())
 
 		err = sandbox.WalkDir(".", func(path string, d fs.DirEntry, err error) error { return nil })
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 }
 
@@ -1693,7 +1693,7 @@ func TestNoOpSandbox_WriteFileAtomic(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.WriteFileAtomic("test.txt", []byte("data"), 0644)
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 }
 
@@ -1738,7 +1738,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		err = sandbox.Chmod("file.txt", 0600)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("write file atomic after close", func(t *testing.T) {
@@ -1749,7 +1749,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		err = sandbox.WriteFileAtomic("file.txt", []byte("data"), 0644)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("mkdir after close", func(t *testing.T) {
@@ -1760,7 +1760,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		err = sandbox.Mkdir("dir", 0755)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("mkdir all after close", func(t *testing.T) {
@@ -1771,7 +1771,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		err = sandbox.MkdirAll("a/b", 0755)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("remove after close", func(t *testing.T) {
@@ -1782,7 +1782,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		err = sandbox.Remove("file.txt")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("remove all after close", func(t *testing.T) {
@@ -1793,7 +1793,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		err = sandbox.RemoveAll("dir")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("rename after close", func(t *testing.T) {
@@ -1804,7 +1804,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		err = sandbox.Rename("old", "new")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("create temp after close", func(t *testing.T) {
@@ -1815,7 +1815,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		_, err = sandbox.CreateTemp(".", "test-*")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("mkdir temp after close", func(t *testing.T) {
@@ -1826,7 +1826,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		_, err = sandbox.MkdirTemp(".", "test-*")
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("openfile read after close", func(t *testing.T) {
@@ -1837,7 +1837,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		_, err = sandbox.OpenFile("file.txt", os.O_RDONLY, 0)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 
 	t.Run("openfile write after close", func(t *testing.T) {
@@ -1848,7 +1848,7 @@ func TestNoOpSandbox_Closed_Extended(t *testing.T) {
 		_ = sandbox.Close()
 
 		_, err = sandbox.OpenFile("file.txt", os.O_WRONLY|os.O_CREATE, 0644)
-		assert.ErrorIs(t, err, errClosed)
+		assert.ErrorIs(t, err, ErrClosed)
 	})
 }
 
@@ -1863,7 +1863,7 @@ func TestNoOpSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.WriteFileAtomic("test.txt", []byte("data"), 0644)
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("remove all read only", func(t *testing.T) {
@@ -1874,7 +1874,7 @@ func TestNoOpSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.RemoveAll("dir")
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 }
 
@@ -1889,7 +1889,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.MkdirAll("a/b", 0755)
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("remove read only", func(t *testing.T) {
@@ -1900,7 +1900,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.Remove("file.txt")
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("removeall read only", func(t *testing.T) {
@@ -1911,7 +1911,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.RemoveAll("dir")
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("rename read only", func(t *testing.T) {
@@ -1922,7 +1922,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.Rename("old", "new")
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("chmod read only", func(t *testing.T) {
@@ -1933,7 +1933,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.Chmod("file.txt", 0600)
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("createtemp read only", func(t *testing.T) {
@@ -1944,7 +1944,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		_, err = sandbox.CreateTemp(".", "test-*")
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("mkdirtemp read only", func(t *testing.T) {
@@ -1955,7 +1955,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		_, err = sandbox.MkdirTemp(".", "test-*")
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("write file atomic read only", func(t *testing.T) {
@@ -1966,7 +1966,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		err = sandbox.WriteFileAtomic("test.txt", []byte("data"), 0644)
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 
 	t.Run("openfile write read only", func(t *testing.T) {
@@ -1977,7 +1977,7 @@ func TestOSSandbox_ReadOnly_Extended(t *testing.T) {
 		defer func() { _ = sandbox.Close() }()
 
 		_, err = sandbox.OpenFile("test.txt", os.O_WRONLY|os.O_CREATE, 0644)
-		assert.ErrorIs(t, err, errReadOnly)
+		assert.ErrorIs(t, err, ErrReadOnly)
 	})
 }
 

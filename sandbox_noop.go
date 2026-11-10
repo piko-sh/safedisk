@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // noOpSandbox is a pass-through implementation that provides no actual sandboxing. Use
@@ -37,11 +38,14 @@ type noOpSandbox struct {
 	// rootPath is the base directory for all file operations.
 	rootPath string
 
+	// closed indicates whether the sandbox has been closed.
+	closed atomic.Bool
+
 	// mode is the current sandbox operating mode.
 	mode Mode
 
-	// closed indicates whether the sandbox has been closed.
-	closed atomic.Bool
+	// options holds the settings chosen with Option values.
+	options sandboxOptions
 }
 
 var (
@@ -60,17 +64,7 @@ func (s *noOpSandbox) Open(name string) (FileHandle, error) {
 		return nil, err
 	}
 
-	fullPath, err := s.fullPath(name)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := os.Open(fullPath) //nolint:gosec // path validated by sandbox
-	if err != nil {
-		return nil, err
-	}
-
-	return &File{file: f, name: cleanPath(name)}, nil
+	return s.openFile(name, os.O_RDONLY, 0)
 }
 
 // ReadFile reads the entire contents of a file up to DefaultReadFileMaxBytes. Callers
@@ -110,7 +104,7 @@ func (s *noOpSandbox) Stat(name string) (fs.FileInfo, error) {
 		return nil, err
 	}
 
-	fullPath, err := s.fullPath(name)
+	fullPath, err := s.checkedPath(name, true)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +123,7 @@ func (s *noOpSandbox) Lstat(name string) (fs.FileInfo, error) {
 		return nil, err
 	}
 
-	fullPath, err := s.fullPath(name)
+	fullPath, err := s.checkedPath(name, false)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +142,7 @@ func (s *noOpSandbox) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, err
 	}
 
-	fullPath, err := s.fullPath(name)
+	fullPath, err := s.checkedPath(name, true)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +161,7 @@ func (s *noOpSandbox) WalkDir(root string, walkFunction fs.WalkDirFunc) error {
 		return err
 	}
 
-	fullRoot, err := s.fullPath(root)
+	fullRoot, err := s.checkedPath(root, false)
 	if err != nil {
 		return err
 	}
@@ -192,17 +186,7 @@ func (s *noOpSandbox) Create(name string) (FileHandle, error) {
 		return nil, err
 	}
 
-	fullPath, err := s.fullPath(name)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := os.Create(fullPath) //nolint:gosec // path validated by sandbox
-	if err != nil {
-		return nil, err
-	}
-
-	return &File{file: f, name: cleanPath(name)}, nil
+	return s.openFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, createPerm)
 }
 
 // OpenFile opens a file with the given flags and permissions.
@@ -226,17 +210,7 @@ func (s *noOpSandbox) OpenFile(name string, flag int, perm fs.FileMode) (FileHan
 		}
 	}
 
-	fullPath, err := s.fullPath(name)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := os.OpenFile(fullPath, flag, perm) //nolint:gosec // path validated by sandbox
-	if err != nil {
-		return nil, err
-	}
-
-	return &File{file: f, name: cleanPath(name)}, nil
+	return s.openFile(name, flag, perm)
 }
 
 // WriteFile writes data to a file.
@@ -247,16 +221,21 @@ func (s *noOpSandbox) OpenFile(name string, flag int, perm fs.FileMode) (FileHan
 //
 // Returns error when the sandbox is not writable or the path is invalid.
 func (s *noOpSandbox) WriteFile(name string, data []byte, perm fs.FileMode) error {
-	if err := s.checkWritable(); err != nil {
-		return err
-	}
-
-	fullPath, err := s.fullPath(name)
+	f, err := s.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(fullPath, data, perm)
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+
+	if writeErr != nil {
+		return fmt.Errorf("writing file data %q: %w", name, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("closing file after write %q: %w", name, closeErr)
+	}
+	return nil
 }
 
 // WriteFileAtomic writes data to a file atomically by first writing to a temporary file
@@ -280,6 +259,14 @@ func (s *noOpSandbox) WriteFileAtomic(name string, data []byte, perm fs.FileMode
 
 	directory := filepath.Dir(fullPath)
 	base := filepath.Base(fullPath)
+
+	cleanName := cleanPath(name)
+	if err := s.policy().checkPath(filepath.Dir(cleanName), true); err != nil {
+		return err
+	}
+	if err := s.policy().checkPath(cleanName, false); err != nil {
+		return err
+	}
 
 	tmpFile, err := os.CreateTemp(directory, "."+base+".tmp.*")
 	if err != nil {
@@ -347,7 +334,7 @@ func (s *noOpSandbox) Mkdir(name string, perm fs.FileMode) error {
 		return err
 	}
 
-	fullPath, err := s.fullPath(name)
+	fullPath, err := s.checkedPath(name, false)
 	if err != nil {
 		return err
 	}
@@ -366,7 +353,7 @@ func (s *noOpSandbox) MkdirAll(path string, perm fs.FileMode) error {
 		return err
 	}
 
-	fullPath, err := s.fullPath(path)
+	fullPath, err := s.checkedPath(path, true)
 	if err != nil {
 		return err
 	}
@@ -384,7 +371,7 @@ func (s *noOpSandbox) Remove(name string) error {
 		return err
 	}
 
-	fullPath, err := s.fullPath(name)
+	fullPath, err := s.checkedPath(name, false)
 	if err != nil {
 		return err
 	}
@@ -402,7 +389,7 @@ func (s *noOpSandbox) RemoveAll(path string) error {
 		return err
 	}
 
-	fullPath, err := s.fullPath(path)
+	fullPath, err := s.checkedPath(path, false)
 	if err != nil {
 		return err
 	}
@@ -421,12 +408,12 @@ func (s *noOpSandbox) Rename(oldpath, newpath string) error {
 		return err
 	}
 
-	fullOld, err := s.fullPath(oldpath)
+	fullOld, err := s.checkedPath(oldpath, false)
 	if err != nil {
 		return err
 	}
 
-	fullNew, err := s.fullPath(newpath)
+	fullNew, err := s.checkedPath(newpath, false)
 	if err != nil {
 		return err
 	}
@@ -445,7 +432,20 @@ func (s *noOpSandbox) Chmod(name string, mode fs.FileMode) error {
 		return err
 	}
 
-	fullPath, err := s.fullPath(name)
+	if s.options.requireSingleLink {
+		f, err := s.openFile(name, os.O_RDONLY, 0)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				warnCloseFailure("Failed to close file after chmod", "file", name, closeErr)
+			}
+		}()
+		return f.Chmod(mode)
+	}
+
+	fullPath, err := s.checkedPath(name, true)
 	if err != nil {
 		return err
 	}
@@ -465,7 +465,7 @@ func (s *noOpSandbox) CreateTemp(directory, pattern string) (FileHandle, error) 
 		return nil, err
 	}
 
-	fullDir, err := s.fullPath(directory)
+	fullDir, err := s.checkedPath(directory, true)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +500,7 @@ func (s *noOpSandbox) MkdirTemp(directory, pattern string) (string, error) {
 		return "", err
 	}
 
-	fullDir, err := s.fullPath(directory)
+	fullDir, err := s.checkedPath(directory, true)
 	if err != nil {
 		return "", err
 	}
@@ -577,6 +577,260 @@ func (s *noOpSandbox) RelPath(path string) string {
 	return path
 }
 
+// Symlink creates newname as a symbolic link to oldname with os.Symlink. Only newname is
+// checked, lexically, and later access through the link is not confined.
+//
+// Takes oldname (string) which is the target stored in the link, unresolved.
+// Takes newname (string) which is the relative path of the link to create.
+//
+// Returns error when the sandbox is closed or read-only, newname escapes the root
+// lexically, or the link cannot be created.
+func (s *noOpSandbox) Symlink(oldname, newname string) error {
+	if err := s.checkWritable(); err != nil {
+		return err
+	}
+	if s.options.noSymlinks {
+		return &fs.PathError{Op: "symlink", Path: newname, Err: ErrSymlinkNotAllowed}
+	}
+
+	fullNew, err := s.checkedPath(newname, false)
+	if err != nil {
+		return err
+	}
+
+	return os.Symlink(oldname, fullNew)
+}
+
+// Link creates newname as a hard link to oldname with os.Link after lexical checks.
+//
+// Takes oldname (string) which is the relative path of the existing file.
+// Takes newname (string) which is the relative path of the link to create.
+//
+// Returns error when the sandbox is closed or read-only, either path escapes the root
+// lexically, or the link cannot be created.
+func (s *noOpSandbox) Link(oldname, newname string) error {
+	if err := s.checkWritable(); err != nil {
+		return err
+	}
+	if s.options.requireSingleLink {
+		return &fs.PathError{Op: "link", Path: newname, Err: ErrMultipleLinks}
+	}
+
+	fullOld, err := s.checkedPath(oldname, false)
+	if err != nil {
+		return err
+	}
+
+	fullNew, err := s.checkedPath(newname, false)
+	if err != nil {
+		return err
+	}
+
+	return os.Link(fullOld, fullNew)
+}
+
+// Readlink returns the stored target of a symbolic link with os.Readlink.
+//
+// Takes name (string) which is the relative path of the symbolic link.
+//
+// Returns string which is the link's target as stored.
+// Returns error when the sandbox is closed, name escapes the root lexically, or the link
+// cannot be read.
+func (s *noOpSandbox) Readlink(name string) (string, error) {
+	if err := s.checkClosed(); err != nil {
+		return "", err
+	}
+
+	fullPath, err := s.checkedPath(name, false)
+	if err != nil {
+		return "", err
+	}
+
+	return os.Readlink(fullPath)
+}
+
+// Chtimes changes the access and modification times of a file with os.Chtimes.
+//
+// Takes name (string) which is the relative path of the file.
+// Takes atime (time.Time) which is the new access time.
+// Takes mtime (time.Time) which is the new modification time.
+//
+// Returns error when the sandbox is closed or read-only, name escapes the root lexically,
+// or the change fails.
+func (s *noOpSandbox) Chtimes(name string, atime, mtime time.Time) error {
+	if err := s.checkWritable(); err != nil {
+		return err
+	}
+
+	fullPath, err := s.checkedPath(name, true)
+	if err != nil {
+		return err
+	}
+
+	return os.Chtimes(fullPath, atime, mtime)
+}
+
+// Lchown changes the numeric user and group of a file with os.Lchown.
+//
+// Takes name (string) which is the relative path of the file.
+// Takes uid (int) which is the new user ID, or -1 to leave it unchanged.
+// Takes gid (int) which is the new group ID, or -1 to leave it unchanged.
+//
+// Returns error when the sandbox is closed or read-only, name escapes the root lexically,
+// or the change fails.
+func (s *noOpSandbox) Lchown(name string, uid, gid int) error {
+	if err := s.checkWritable(); err != nil {
+		return err
+	}
+
+	fullPath, err := s.checkedPath(name, false)
+	if err != nil {
+		return err
+	}
+
+	return os.Lchown(fullPath, uid, gid)
+}
+
+// Chown changes the numeric user and group of a file with os.Chown, following a final
+// symbolic link.
+//
+// Takes name (string) which is the relative path of the file.
+// Takes uid (int) which is the new user ID, or -1 to leave it unchanged.
+// Takes gid (int) which is the new group ID, or -1 to leave it unchanged.
+//
+// Returns error when the sandbox is closed or read-only, name escapes the root lexically,
+// or the change fails.
+func (s *noOpSandbox) Chown(name string, uid, gid int) error {
+	if err := s.checkWritable(); err != nil {
+		return err
+	}
+
+	fullPath, err := s.checkedPath(name, true)
+	if err != nil {
+		return err
+	}
+
+	return os.Chown(fullPath, uid, gid)
+}
+
+// OpenRoot returns a no-op sandbox rooted at an existing directory within this one. Like
+// this sandbox, it checks paths only lexically.
+//
+// Takes directory (string) which is the relative path of the directory to root at.
+// Takes mode (Mode) which is the mode of the new sandbox.
+//
+// Returns Sandbox which is a no-op sandbox rooted at directory.
+// Returns error when the sandbox is closed, the mode would widen access, directory
+// escapes the root lexically, or directory is not an existing directory.
+func (s *noOpSandbox) OpenRoot(directory string, mode Mode) (Sandbox, error) {
+	if err := s.checkClosed(); err != nil {
+		return nil, err
+	}
+
+	childMode, err := subSandboxMode(s.mode, mode, directory)
+	if err != nil {
+		return nil, err
+	}
+
+	fullPath, err := s.checkedPath(directory, true)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, &fs.PathError{Op: "openroot", Path: directory, Err: errNotDirectory}
+	}
+
+	return &noOpSandbox{
+		rootPath: fullPath,
+		mode:     childMode,
+		options:  s.options,
+		closed:   atomic.Bool{},
+	}, nil
+}
+
+// FS returns a read-only fs.FS view of the root directory, backed by os.DirFS. Like the
+// rest of this sandbox, it does not confine symbolic links.
+//
+// Returns fs.FS which fails with ErrClosed once the sandbox is closed.
+func (s *noOpSandbox) FS() fs.FS {
+	return newSandboxFS(os.DirFS(s.rootPath), s.checkClosed, s.options, s.policy(), func(name string) (*File, error) {
+		return s.openFile(name, os.O_RDONLY, 0)
+	})
+}
+
+// IsNoOp reports whether the sandbox performs no confinement.
+//
+// Returns bool which is always true for this implementation.
+func (*noOpSandbox) IsNoOp() bool {
+	return true
+}
+
+// openFile opens a file with os.OpenFile after the lexical check and applies the
+// sandbox's options.
+//
+// Takes name (string) which is the relative path of the file.
+// Takes flag (int) which is the open flags.
+// Takes perm (fs.FileMode) which is the permission for a created file.
+//
+// Returns *File which wraps the opened file.
+// Returns error when the path or the opened file is refused, or the open fails.
+func (s *noOpSandbox) openFile(name string, flag int, perm fs.FileMode) (*File, error) {
+	fullPath, err := s.checkedPath(name, true)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanName := cleanPath(name)
+	policy := s.policy()
+	openFlag, truncate := policy.openFlags(flag)
+	f, err := os.OpenFile(fullPath, openFlag, perm) //nolint:gosec // path validated by sandbox
+	if err != nil {
+		return nil, err
+	}
+	if err := policy.afterOpen(cleanName, f, truncate); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+
+	return &File{file: f, name: cleanName}, nil
+}
+
+// checkedPath applies the lexical check and then the symbolic link check.
+//
+// Takes name (string) which is the relative path.
+// Takes followFinal (bool) which is true when the operation follows a final symbolic
+// link.
+//
+// Returns string which is the absolute path within the root.
+// Returns error when the path escapes the root or is refused.
+func (s *noOpSandbox) checkedPath(name string, followFinal bool) (string, error) {
+	fullPath, err := s.fullPath(name)
+	if err != nil {
+		return "", err
+	}
+	if err := s.policy().checkPath(cleanPath(name), followFinal); err != nil {
+		return "", err
+	}
+	return fullPath, nil
+}
+
+// policy returns the sandbox's options bound to its root directory.
+//
+// Returns openPolicy which checks paths with os.Lstat beneath the root.
+func (s *noOpSandbox) policy() openPolicy {
+	return openPolicy{
+		lstat: func(name string) (fs.FileInfo, error) {
+			return os.Lstat(filepath.Join(s.rootPath, name))
+		},
+		options: s.options,
+	}
+}
+
 // fullPath turns a relative path into an absolute path within the root. It does basic
 // path traversal checks but is not as secure as OSSandbox.
 //
@@ -590,7 +844,7 @@ func (s *noOpSandbox) fullPath(name string) (string, error) {
 	cleanFull := filepath.Clean(fullPath)
 
 	if !isWithinRoot(s.rootPath, cleanFull) {
-		return "", fmt.Errorf("safedisk: path %q escapes sandbox root", name)
+		return "", fmt.Errorf("safedisk: path %q %w", name, errEscapesRoot)
 	}
 
 	return cleanFull, nil
@@ -601,7 +855,7 @@ func (s *noOpSandbox) fullPath(name string) (string, error) {
 // Returns error when the sandbox has been closed.
 func (s *noOpSandbox) checkClosed() error {
 	if s.closed.Load() {
-		return errClosed
+		return ErrClosed
 	}
 	return nil
 }
@@ -614,7 +868,7 @@ func (s *noOpSandbox) checkWritable() error {
 		return err
 	}
 	if s.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 	return nil
 }
@@ -630,6 +884,23 @@ func (s *noOpSandbox) checkWritable() error {
 //
 // For read-write mode, the directory is created if it does not exist.
 func NewNoOpSandbox(directory string, mode Mode) (Sandbox, error) {
+	return NewNoOpSandboxWithOptions(directory, mode)
+}
+
+// NewNoOpSandboxWithOptions creates a no-op sandbox configured with options such as
+// WithRequireSingleLink and WithNoSymlinks. The options are honoured, with their checks
+// made against paths beneath the root, but paths are still confined only lexically.
+//
+// Takes directory (string) which is the root directory path.
+// Takes mode (Mode) which sets whether to allow write operations.
+// Takes options (...Option) which configure further checks. Sub-sandboxes from OpenRoot
+// inherit them.
+//
+// Returns Sandbox which is the filesystem wrapper.
+// Returns error when the directory path is empty or cannot be resolved.
+//
+// For read-write mode, the directory is created if it does not exist.
+func NewNoOpSandboxWithOptions(directory string, mode Mode, options ...Option) (Sandbox, error) {
 	if directory == "" {
 		return nil, errEmptyPath
 	}
@@ -648,6 +919,7 @@ func NewNoOpSandbox(directory string, mode Mode) (Sandbox, error) {
 	return &noOpSandbox{
 		rootPath: absDir,
 		mode:     mode,
+		options:  applyOptions(options),
 		closed:   atomic.Bool{},
 	}, nil
 }

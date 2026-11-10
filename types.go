@@ -362,6 +362,85 @@ type Sandbox interface {
 	// Returns error if changing fails, path escapes sandbox, or sandbox is read-only.
 	Chmod(name string, mode fs.FileMode) error
 
+	// Symlink creates newname as a symbolic link to oldname.
+	//
+	// Takes oldname (string) which is the target stored in the link, unresolved.
+	// Takes newname (string) which is the relative path of the link to create.
+	//
+	// Returns error when the sandbox is closed or read-only, newname escapes the sandbox, or
+	// the link cannot be created.
+	Symlink(oldname, newname string) error
+
+	// Link creates newname as a hard link to the file oldname within the sandbox.
+	//
+	// Takes oldname (string) which is the relative path of the existing file.
+	// Takes newname (string) which is the relative path of the link to create.
+	//
+	// Returns error when the sandbox is closed or read-only, either path escapes the
+	// sandbox, or the link cannot be created.
+	Link(oldname, newname string) error
+
+	// Readlink returns the target of a symbolic link within the sandbox.
+	//
+	// Takes name (string) which is the relative path of the symbolic link.
+	//
+	// Returns string which is the link's target as stored.
+	// Returns error when the sandbox is closed, name escapes the sandbox, or name is not a
+	// symbolic link.
+	Readlink(name string) (string, error)
+
+	// Chtimes changes the access and modification times of a file within the sandbox.
+	//
+	// Takes name (string) which is the relative path of the file.
+	// Takes atime (time.Time) which is the new access time.
+	// Takes mtime (time.Time) which is the new modification time.
+	//
+	// Returns error when the sandbox is closed or read-only, name escapes the sandbox, or
+	// the change fails.
+	Chtimes(name string, atime, mtime time.Time) error
+
+	// Lchown changes the numeric user and group of a file within the sandbox without
+	// following a symbolic link in the final component.
+	//
+	// Takes name (string) which is the relative path of the file.
+	// Takes uid (int) which is the new user ID, or -1 to leave it unchanged.
+	// Takes gid (int) which is the new group ID, or -1 to leave it unchanged.
+	//
+	// Returns error when the sandbox is closed or read-only, name escapes the sandbox, or
+	// the change fails, including on platforms without ownership such as Windows.
+	Lchown(name string, uid, gid int) error
+
+	// Chown changes the numeric user and group of a file within the sandbox, following a
+	// symbolic link in the final component. The path and the link are resolved by os.Root
+	// and confined to the sandbox, with the same caveat about a replaced final component as
+	// Chtimes.
+	//
+	// Takes name (string) which is the relative path of the file.
+	// Takes uid (int) which is the new user ID, or -1 to leave it unchanged.
+	// Takes gid (int) which is the new group ID, or -1 to leave it unchanged.
+	//
+	// Returns error when the sandbox is closed or read-only, name escapes the sandbox, or
+	// the change fails, including on platforms without ownership such as Windows.
+	Chown(name string, uid, gid int) error
+
+	// OpenRoot opens an existing directory within the sandbox as a new sandbox rooted
+	// there.
+	//
+	// Takes directory (string) which is the relative path of the directory to root at.
+	// Takes mode (Mode) which is the mode of the new sandbox.
+	//
+	// Returns Sandbox which is confined to directory.
+	// Returns error when this sandbox is closed, mode is read-write while this sandbox is
+	// read-only (wrapping ErrReadOnly), directory escapes the sandbox, or directory is not
+	// an existing directory.
+	OpenRoot(directory string, mode Mode) (Sandbox, error)
+
+	// FS returns a read-only fs.FS view of the sandbox.
+	//
+	// Returns fs.FS which also implements fs.StatFS, fs.ReadFileFS, fs.ReadDirFS and
+	// fs.ReadLinkFS.
+	FS() fs.FS
+
 	// CreateTemp creates a temporary file within the sandbox. The file is created in the
 	// specified directory with a name generated from the pattern (using * as placeholder for
 	// random string).
@@ -396,6 +475,11 @@ type Sandbox interface {
 	//
 	// Returns bool which is true when the sandbox does not allow write operations.
 	IsReadOnly() bool
+
+	// IsNoOp reports whether the sandbox performs no confinement.
+	//
+	// Returns bool which is true when the sandbox does not confine paths with os.Root.
+	IsNoOp() bool
 
 	// Close releases any resources held by the sandbox. After Close is called, all
 	// operations will fail.
@@ -571,6 +655,13 @@ func (f *File) ReadDir(n int) ([]fs.DirEntry, error) {
 // Returns uintptr which is the operating system file descriptor.
 func (f *File) Fd() uintptr {
 	return f.file.Fd()
+}
+
+// OSFile returns the *os.File that this handle wraps.
+//
+// Returns *os.File which is the underlying open file, or nil if the handle has none.
+func (f *File) OSFile() *os.File {
+	return f.file
 }
 
 // fileInfo wraps fs.FileInfo with extra sandbox context.

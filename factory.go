@@ -29,8 +29,8 @@ import (
 // within the allowed list, preventing malicious or accidental access to sensitive
 // directories.
 type Factory interface {
-	// Create creates a new sandbox for the given path. The path must be within the allowed
-	// paths list if configured; CWD is always implicitly allowed.
+	// Create creates a new sandbox for the given path. The path must be the working
+	// directory, a configured allowed path, or beneath one of them.
 	//
 	// Takes purpose (string) which is a descriptive name for logging.
 	// Takes path (string) which is the directory to sandbox.
@@ -59,7 +59,8 @@ type Factory interface {
 
 	// AllowedPaths returns the list of paths that are allowed.
 	//
-	// Returns []string which is empty if all paths are allowed.
+	// Returns []string which always holds the working directory first, followed by the
+	// configured allowed paths. It is never empty.
 	AllowedPaths() []string
 }
 
@@ -69,13 +70,24 @@ type FactoryConfig struct {
 	// detected automatically.
 	CWD string
 
-	// AllowedPaths is a list of absolute paths that can be sandboxed, normalised during
-	// factory creation, where an empty list allows all paths (backwards compatible).
+	// AllowedPaths is a list of paths, made absolute during factory creation, that can be
+	// sandboxed together with everything beneath them.
+	//
+	// The working directory is always added, so an empty list allows only the working
+	// directory and its descendants. There is no setting that allows every path.
 	AllowedPaths []string
 
 	// Enabled controls whether sandboxing uses os.Root (true) or NoOpSandbox (false), where
 	// false provides no actual security and only basic path validation (default: true).
 	Enabled bool
+
+	// RequireSingleLink makes every sandbox refuse to open a file with more than one hard
+	// link, as WithRequireSingleLink does. It is off by default.
+	RequireSingleLink bool
+
+	// NoSymlinks makes every sandbox refuse to follow or create symbolic links, as
+	// WithNoSymlinks does. It is off by default.
+	NoSymlinks bool
 }
 
 // factoryImpl is the default implementation of the Factory interface.
@@ -98,26 +110,28 @@ type factoryImpl struct {
 //
 // Returns Sandbox which is either a real sandbox or a no-op implementation depending on
 // the factory configuration.
-// Returns error when path is empty, invalid, or not within allowed paths.
+// Returns error when path is empty or invalid, or wrapping ErrPathNotAllowed when the
+// path is not within the allowed paths.
 func (f *factoryImpl) Create(purpose string, path string, mode Mode) (Sandbox, error) {
 	if path == "" {
-		return nil, fmt.Errorf("safedisk: %s: %w", purpose, errEmptyPath)
+		return nil, fmt.Errorf("%w: sandbox %q", errEmptyPath, purpose)
 	}
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("safedisk: %s: invalid path %q: %w", purpose, path, err)
+		return nil, fmt.Errorf("safedisk: sandbox %q: invalid path %q: %w", purpose, path, err)
 	}
 
 	if !f.checkPathAllowed(absPath) {
-		return nil, fmt.Errorf("safedisk: %s: %w: %q is not within allowed paths %v", purpose, errPathNotAllowed, absPath, f.allowedPaths)
+		return nil, fmt.Errorf("%w: sandbox %q: %q is not within allowed paths %v", ErrPathNotAllowed, purpose, absPath, f.AllowedPaths())
 	}
 
+	options := f.sandboxOptions()
 	if f.config.Enabled {
-		return NewSandbox(absPath, mode)
+		return NewSandboxWithOptions(absPath, mode, options...)
 	}
 
-	return NewNoOpSandbox(absPath, mode)
+	return NewNoOpSandboxWithOptions(absPath, mode, options...)
 }
 
 // MustCreate is like Create but panics on error.
@@ -132,7 +146,7 @@ func (f *factoryImpl) Create(purpose string, path string, mode Mode) (Sandbox, e
 func (f *factoryImpl) MustCreate(purpose string, path string, mode Mode) Sandbox {
 	sandbox, err := f.Create(purpose, path, mode)
 	if err != nil {
-		panic(fmt.Sprintf("safedisk: failed to create sandbox for %s at %q: %v", purpose, path, err))
+		panic(fmt.Sprintf("%v (creating sandbox for %s at %q)", err, purpose, path))
 	}
 	return sandbox
 }
@@ -169,6 +183,20 @@ func (f *factoryImpl) AllowedPaths() []string {
 	return paths
 }
 
+// sandboxOptions converts the factory configuration into sandbox options.
+//
+// Returns []Option which holds an Option for each setting that is switched on.
+func (f *factoryImpl) sandboxOptions() []Option {
+	var options []Option
+	if f.config.RequireSingleLink {
+		options = append(options, WithRequireSingleLink())
+	}
+	if f.config.NoSymlinks {
+		options = append(options, WithNoSymlinks())
+	}
+	return options
+}
+
 // checkPathAllowed checks if an absolute path is within the allowed paths.
 //
 // Takes absPath (string) which is the path to check.
@@ -179,10 +207,6 @@ func (f *factoryImpl) AllowedPaths() []string {
 func (f *factoryImpl) checkPathAllowed(absPath string) bool {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-
-	if len(f.allowedPaths) == 0 {
-		return true
-	}
 
 	for _, allowed := range f.allowedPaths {
 		if isWithinOrEqual(allowed, absPath) {
@@ -246,19 +270,22 @@ func NewFactory(config FactoryConfig) (Factory, error) {
 }
 
 // NewCLIFactory creates a factory suitable for CLI tools and standalone commands. It
-// enables kernel-level sandboxing, uses the given working directory, and places no
-// restrictions on allowed paths.
+// enables os.Root sandboxing, uses the given working directory, and configures no further
+// allowed paths, so it creates sandboxes only for the working directory and the
+// directories beneath it.
 //
 // Takes cwd (string) which is the working directory for the factory. When empty, the
 // current working directory is detected automatically.
 //
-// Returns Factory which creates sandboxes with no path restrictions.
+// Returns Factory which creates sandboxes only within the working directory.
 // Returns error when factory creation fails.
 func NewCLIFactory(cwd string) (Factory, error) {
 	return NewFactory(FactoryConfig{
-		CWD:          cwd,
-		AllowedPaths: nil,
-		Enabled:      true,
+		CWD:               cwd,
+		AllowedPaths:      nil,
+		Enabled:           true,
+		RequireSingleLink: false,
+		NoSymlinks:        false,
 	})
 }
 
@@ -269,9 +296,11 @@ func NewCLIFactory(cwd string) (Factory, error) {
 // Returns error when the working directory cannot be detected.
 func newDefaultFactory() (Factory, error) {
 	return NewFactory(FactoryConfig{
-		CWD:          "",
-		AllowedPaths: nil,
-		Enabled:      true,
+		CWD:               "",
+		AllowedPaths:      nil,
+		Enabled:           true,
+		RequireSingleLink: false,
+		NoSymlinks:        false,
 	})
 }
 

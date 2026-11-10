@@ -25,8 +25,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"testing/fstest"
 	"time"
 )
 
@@ -499,8 +502,27 @@ func (m *mockDirEntry) Type() fs.FileMode { return m.info.Mode().Type() }
 // Returns error when the file information cannot be retrieved.
 func (m *mockDirEntry) Info() (fs.FileInfo, error) { return m.info, nil }
 
-// MockSandbox provides a mock implementation of Sandbox for testing. It uses an in-memory
-// file system and allows configuring errors.
+// mockFS is the fs.FS returned by MockSandbox.FS.
+type mockFS struct {
+	// sandbox is the mock whose entries the view exposes.
+	sandbox *MockSandbox
+}
+
+// Open opens the named entry from a snapshot of the mock's current contents.
+//
+// Takes name (string) which is a slash-separated path valid for fs.FS.
+//
+// Returns fs.File which reads the snapshot.
+// Returns error when the name is invalid (wrapping fs.ErrInvalid) or the entry does not
+// exist (wrapping fs.ErrNotExist).
+func (f *mockFS) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	return f.sandbox.snapshotFS().Open(name)
+}
+
+// MockSandbox provides a mock implementation of Sandbox for testing.
 type MockSandbox struct {
 	// OpenErr is the error to return from Open; nil means success.
 	OpenErr error
@@ -574,8 +596,32 @@ type MockSandbox struct {
 	// created; nil means no error.
 	NextTempFileCloseErr error
 
+	// SymlinkErr is returned by Symlink when set; nil means success.
+	SymlinkErr error
+
+	// LinkErr is returned by Link when set; nil means success.
+	LinkErr error
+
+	// ReadlinkErr is returned by Readlink when set; nil means success.
+	ReadlinkErr error
+
+	// ChtimesErr is returned by Chtimes when set; nil means success.
+	ChtimesErr error
+
+	// LchownErr is returned by Lchown when set; nil means success.
+	LchownErr error
+
+	// ChownErr is returned by Chown when set; nil means success.
+	ChownErr error
+
+	// OpenRootErr is returned by OpenRoot when set; nil means success.
+	OpenRootErr error
+
 	// files stores the mock files by their path.
 	files map[string]*MockFileHandle
+
+	// symlinks stores the targets of mock symbolic links by their path.
+	symlinks map[string]string
 
 	// ChmodFunc sets a custom Chmod function for testing.
 	ChmodFunc func(name string, mode fs.FileMode) error
@@ -591,6 +637,10 @@ type MockSandbox struct {
 
 	// mode is the sandbox access mode; ModeReadOnly blocks write operations.
 	mode Mode
+
+	// NoOp is the value IsNoOp returns, so tests can simulate a no-op sandbox. It is false
+	// by default and is copied to sub-sandboxes from OpenRoot.
+	NoOp bool
 }
 
 // NewMockSandbox creates a new mock sandbox with the given root and mode.
@@ -604,6 +654,7 @@ func NewMockSandbox(root string, mode Mode) *MockSandbox {
 	sandbox.root = root
 	sandbox.mode = mode
 	sandbox.files = make(map[string]*MockFileHandle)
+	sandbox.symlinks = make(map[string]string)
 	sandbox.CallCounts = make(map[string]int)
 	return &sandbox
 }
@@ -841,7 +892,7 @@ func (m *MockSandbox) Create(name string) (FileHandle, error) {
 	}
 
 	if m.mode == ModeReadOnly {
-		return nil, errReadOnly
+		return nil, ErrReadOnly
 	}
 
 	file := NewMockFileHandle(name, m.root+"/"+name, nil)
@@ -883,7 +934,7 @@ func (m *MockSandbox) OpenFile(name string, flag int, _ fs.FileMode) (FileHandle
 
 	writeFlags := flagWrite | flagReadWrite | flagCreate | flagTrunc | flagAppend
 	if m.mode == ModeReadOnly && (flag&writeFlags) != 0 {
-		return nil, errReadOnly
+		return nil, ErrReadOnly
 	}
 
 	m.mu.Lock()
@@ -927,7 +978,7 @@ func (m *MockSandbox) WriteFile(name string, data []byte, _ fs.FileMode) error {
 	}
 
 	if m.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 
 	file := NewMockFileHandle(name, m.root+"/"+name, data)
@@ -965,7 +1016,7 @@ func (m *MockSandbox) Mkdir(_ string, _ fs.FileMode) error {
 	}
 
 	if m.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 
 	return nil
@@ -987,7 +1038,7 @@ func (m *MockSandbox) MkdirAll(path string, perm fs.FileMode) error {
 	}
 
 	if m.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 
 	parts := splitPath(path)
@@ -1031,11 +1082,12 @@ func (m *MockSandbox) Remove(name string) error {
 	}
 
 	if m.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 
 	m.mu.Lock()
 	delete(m.files, name)
+	delete(m.symlinks, name)
 	m.mu.Unlock()
 
 	return nil
@@ -1056,7 +1108,7 @@ func (m *MockSandbox) RemoveAll(path string) error {
 	}
 
 	if m.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 
 	m.mu.Lock()
@@ -1086,7 +1138,7 @@ func (m *MockSandbox) Rename(oldpath, newpath string) error {
 	}
 
 	if m.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 
 	m.mu.Lock()
@@ -1120,7 +1172,7 @@ func (m *MockSandbox) Chmod(name string, mode fs.FileMode) error {
 	}
 
 	if m.mode == ModeReadOnly {
-		return errReadOnly
+		return ErrReadOnly
 	}
 
 	if m.ChmodFunc != nil {
@@ -1147,7 +1199,7 @@ func (m *MockSandbox) CreateTemp(directory, pattern string) (FileHandle, error) 
 	}
 
 	if m.mode == ModeReadOnly {
-		return nil, errReadOnly
+		return nil, ErrReadOnly
 	}
 
 	name := directory + "/temp-" + pattern + "-12345"
@@ -1187,7 +1239,7 @@ func (m *MockSandbox) MkdirTemp(directory, pattern string) (string, error) {
 	}
 
 	if m.mode == ModeReadOnly {
-		return "", errReadOnly
+		return "", ErrReadOnly
 	}
 
 	return directory + "/temp-" + pattern + "-12345", nil
@@ -1236,6 +1288,224 @@ func (*MockSandbox) RelPath(path string) string {
 	return path
 }
 
+// Symlink records newname as a symbolic link to oldname. The target is stored as given.
+//
+// Takes oldname (string) which is the target stored in the link.
+// Takes newname (string) which is the path of the link to create.
+//
+// Returns error when SymlinkErr is set, the sandbox is read-only, or newname already
+// exists (fs.ErrExist).
+//
+// Safe for concurrent use.
+func (m *MockSandbox) Symlink(oldname, newname string) error {
+	m.incrementCall("Symlink")
+
+	if m.SymlinkErr != nil {
+		return m.SymlinkErr
+	}
+
+	if m.mode == ModeReadOnly {
+		return ErrReadOnly
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.existsLocked(newname) {
+		return fs.ErrExist
+	}
+	if m.symlinks == nil {
+		m.symlinks = make(map[string]string)
+	}
+	m.symlinks[newname] = oldname
+
+	return nil
+}
+
+// Link records newname as a second name for the file oldname. Both names share one
+// handle, as hard links share one file.
+//
+// Takes oldname (string) which is the path of the existing file.
+// Takes newname (string) which is the path of the link to create.
+//
+// Returns error when LinkErr is set, the sandbox is read-only, oldname does not exist
+// (fs.ErrNotExist), or newname already exists (fs.ErrExist).
+//
+// Safe for concurrent use.
+func (m *MockSandbox) Link(oldname, newname string) error {
+	m.incrementCall("Link")
+
+	if m.LinkErr != nil {
+		return m.LinkErr
+	}
+
+	if m.mode == ModeReadOnly {
+		return ErrReadOnly
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	file, exists := m.files[oldname]
+	if !exists {
+		return fs.ErrNotExist
+	}
+	if m.existsLocked(newname) {
+		return fs.ErrExist
+	}
+	m.files[newname] = file
+
+	return nil
+}
+
+// Readlink returns the target recorded by Symlink.
+//
+// Takes name (string) which is the path of the symbolic link.
+//
+// Returns string which is the stored target.
+// Returns error when ReadlinkErr is set, name is a file rather than a link
+// (fs.ErrInvalid), or name does not exist (fs.ErrNotExist).
+//
+// Safe for concurrent use.
+func (m *MockSandbox) Readlink(name string) (string, error) {
+	m.incrementCall("Readlink")
+
+	if m.ReadlinkErr != nil {
+		return "", m.ReadlinkErr
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if target, exists := m.symlinks[name]; exists {
+		return target, nil
+	}
+	if _, exists := m.files[name]; exists {
+		return "", fs.ErrInvalid
+	}
+	return "", fs.ErrNotExist
+}
+
+// Chtimes checks that a file exists. The mock does not record times.
+//
+// Takes name (string) which is the path of the file.
+//
+// Returns error when ChtimesErr is set, the sandbox is read-only, or name does not exist
+// (fs.ErrNotExist).
+func (m *MockSandbox) Chtimes(name string, _, _ time.Time) error {
+	m.incrementCall("Chtimes")
+
+	if m.ChtimesErr != nil {
+		return m.ChtimesErr
+	}
+
+	return m.checkWritableEntry(name)
+}
+
+// Lchown checks that a file exists. The mock does not record ownership.
+//
+// Takes name (string) which is the path of the file.
+//
+// Returns error when LchownErr is set, the sandbox is read-only, or name does not exist
+// (fs.ErrNotExist).
+func (m *MockSandbox) Lchown(name string, _, _ int) error {
+	m.incrementCall("Lchown")
+
+	if m.LchownErr != nil {
+		return m.LchownErr
+	}
+
+	return m.checkWritableEntry(name)
+}
+
+// Chown checks that a file exists. The mock does not record ownership.
+//
+// Takes name (string) which is the path of the file.
+//
+// Returns error when ChownErr is set, the sandbox is read-only, or name does not exist
+// (fs.ErrNotExist).
+func (m *MockSandbox) Chown(name string, _, _ int) error {
+	m.incrementCall("Chown")
+
+	if m.ChownErr != nil {
+		return m.ChownErr
+	}
+
+	return m.checkWritableEntry(name)
+}
+
+// OpenRoot returns a new mock sandbox holding the entries beneath directory, renamed
+// relative to it. The entries share their handles with this sandbox, but files added to
+// either sandbox afterwards are not shared.
+//
+// Takes directory (string) which is the relative path of the directory to root at.
+// Takes mode (Mode) which is the mode of the new sandbox.
+//
+// Returns Sandbox which is a *MockSandbox rooted at directory.
+// Returns error when OpenRootErr is set, the mode would widen access (wrapping
+// ErrReadOnly), or directory is not a local path, such as one that is absolute or starts
+// with "..".
+//
+// Safe for concurrent use.
+func (m *MockSandbox) OpenRoot(directory string, mode Mode) (Sandbox, error) {
+	m.incrementCall("OpenRoot")
+
+	if m.OpenRootErr != nil {
+		return nil, m.OpenRootErr
+	}
+
+	childMode, err := subSandboxMode(m.mode, mode, directory)
+	if err != nil {
+		return nil, err
+	}
+
+	if !filepath.IsLocal(directory) {
+		return nil, &fs.PathError{Op: "openroot", Path: directory, Err: errEscapesRoot}
+	}
+
+	cleanDirectory := filepath.ToSlash(filepath.Clean(directory))
+	prefix := cleanDirectory + "/"
+	if cleanDirectory == currentDir {
+		prefix = ""
+	}
+
+	child := NewMockSandbox(m.root+"/"+cleanDirectory, childMode)
+	child.NoOp = m.NoOp
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for name, file := range m.files {
+		if rest, found := strings.CutPrefix(name, prefix); found && rest != "" {
+			child.files[rest] = file
+		}
+	}
+	for name, target := range m.symlinks {
+		if rest, found := strings.CutPrefix(name, prefix); found && rest != "" {
+			child.symlinks[rest] = target
+		}
+	}
+
+	return child, nil
+}
+
+// FS returns a read-only fs.FS view of the mock's files and symbolic links. Each call on
+// the view sees the mock's current contents.
+//
+// Returns fs.FS which is backed by an fstest.MapFS built for each call.
+func (m *MockSandbox) FS() fs.FS {
+	m.incrementCall("FS")
+
+	return &mockFS{sandbox: m}
+}
+
+// IsNoOp reports the configured NoOp field.
+//
+// Returns bool which is the value of NoOp, false by default.
+func (m *MockSandbox) IsNoOp() bool {
+	return m.NoOp
+}
+
 // incrementCall records that the given method was called.
 //
 // Takes method (string) which is the name of the method to record.
@@ -1245,6 +1515,70 @@ func (m *MockSandbox) incrementCall(method string) {
 	m.mu.Lock()
 	m.CallCounts[method]++
 	m.mu.Unlock()
+}
+
+// existsLocked reports whether a file or symbolic link is recorded at name. The caller
+// must hold mu.
+//
+// Takes name (string) which is the path to look up.
+//
+// Returns bool which is true when name is a file or a symbolic link.
+func (m *MockSandbox) existsLocked(name string) bool {
+	if _, exists := m.files[name]; exists {
+		return true
+	}
+	_, exists := m.symlinks[name]
+	return exists
+}
+
+// checkWritableEntry refuses a change on a read-only mock or a missing entry.
+//
+// Takes name (string) which is the path to look up.
+//
+// Returns error which is ErrReadOnly, fs.ErrNotExist, or nil.
+//
+// Safe for concurrent use.
+func (m *MockSandbox) checkWritableEntry(name string) error {
+	if m.mode == ModeReadOnly {
+		return ErrReadOnly
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if !m.existsLocked(name) {
+		return fs.ErrNotExist
+	}
+	return nil
+}
+
+// snapshotFS copies the mock's files and symbolic links into an fstest.MapFS. Mode and
+// modification time come from a file's StatInfo when set; otherwise the default mode and
+// the zero time are used, so that repeated snapshots agree.
+//
+// Returns fstest.MapFS which holds a copy of every entry.
+//
+// Safe for concurrent use.
+func (m *MockSandbox) snapshotFS() fstest.MapFS {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	snapshot := make(fstest.MapFS, len(m.files)+len(m.symlinks))
+	for name, file := range m.files {
+		entry := &fstest.MapFile{Data: nil, Mode: mockFilePermission, ModTime: time.Time{}, Sys: nil}
+		if file.StatInfo != nil {
+			entry.Mode = file.StatInfo.Mode()
+			entry.ModTime = file.StatInfo.ModTime()
+		}
+		if !entry.Mode.IsDir() {
+			entry.Data = bytes.Clone(file.Data())
+		}
+		snapshot[name] = entry
+	}
+	for name, target := range m.symlinks {
+		snapshot[name] = &fstest.MapFile{Data: []byte(target), Mode: fs.ModeSymlink | fs.ModePerm, ModTime: time.Time{}, Sys: nil}
+	}
+	return snapshot
 }
 
 // collectMatchingPaths returns all paths that match the root prefix.

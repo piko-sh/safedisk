@@ -328,18 +328,18 @@ func TestMockSandbox_ReadOnlyMode(t *testing.T) {
 	}
 
 	_, err = sandbox.Create("new.txt")
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("Create() error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("Create() error = %v, want ErrReadOnly", err)
 	}
 
 	err = sandbox.WriteFile("test.txt", []byte("new"), 0644)
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("WriteFile() error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("WriteFile() error = %v, want ErrReadOnly", err)
 	}
 
 	err = sandbox.Remove("test.txt")
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("Remove() error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("Remove() error = %v, want ErrReadOnly", err)
 	}
 }
 
@@ -771,8 +771,8 @@ func TestMockSandbox_Mkdir(t *testing.T) {
 		t.Parallel()
 		sandbox := NewMockSandbox("/sandbox", ModeReadOnly)
 		defer func() { _ = sandbox.Close() }()
-		if err := sandbox.Mkdir("subdir", 0755); !errors.Is(err, errReadOnly) {
-			t.Errorf("Mkdir() error = %v, want errReadOnly", err)
+		if err := sandbox.Mkdir("subdir", 0755); !errors.Is(err, ErrReadOnly) {
+			t.Errorf("Mkdir() error = %v, want ErrReadOnly", err)
 		}
 	})
 
@@ -815,8 +815,8 @@ func TestMockSandbox_MkdirAll(t *testing.T) {
 		t.Parallel()
 		sandbox := NewMockSandbox("/sandbox", ModeReadOnly)
 		defer func() { _ = sandbox.Close() }()
-		if err := sandbox.MkdirAll("a/b", 0755); !errors.Is(err, errReadOnly) {
-			t.Errorf("MkdirAll() error = %v, want errReadOnly", err)
+		if err := sandbox.MkdirAll("a/b", 0755); !errors.Is(err, ErrReadOnly) {
+			t.Errorf("MkdirAll() error = %v, want ErrReadOnly", err)
 		}
 	})
 
@@ -880,8 +880,8 @@ func TestMockSandbox_RemoveAll(t *testing.T) {
 		t.Parallel()
 		sandbox := NewMockSandbox("/sandbox", ModeReadOnly)
 		defer func() { _ = sandbox.Close() }()
-		if err := sandbox.RemoveAll("dir"); !errors.Is(err, errReadOnly) {
-			t.Errorf("RemoveAll() error = %v, want errReadOnly", err)
+		if err := sandbox.RemoveAll("dir"); !errors.Is(err, ErrReadOnly) {
+			t.Errorf("RemoveAll() error = %v, want ErrReadOnly", err)
 		}
 	})
 
@@ -913,8 +913,8 @@ func TestMockSandbox_Chmod(t *testing.T) {
 		t.Parallel()
 		sandbox := NewMockSandbox("/sandbox", ModeReadOnly)
 		defer func() { _ = sandbox.Close() }()
-		if err := sandbox.Chmod("file.txt", 0600); !errors.Is(err, errReadOnly) {
-			t.Errorf("Chmod() error = %v, want errReadOnly", err)
+		if err := sandbox.Chmod("file.txt", 0600); !errors.Is(err, ErrReadOnly) {
+			t.Errorf("Chmod() error = %v, want ErrReadOnly", err)
 		}
 	})
 
@@ -989,8 +989,8 @@ func TestMockSandbox_MkdirTemp(t *testing.T) {
 		sandbox := NewMockSandbox("/sandbox", ModeReadOnly)
 		defer func() { _ = sandbox.Close() }()
 		_, err := sandbox.MkdirTemp("tmp", "test-*")
-		if !errors.Is(err, errReadOnly) {
-			t.Errorf("MkdirTemp() error = %v, want errReadOnly", err)
+		if !errors.Is(err, ErrReadOnly) {
+			t.Errorf("MkdirTemp() error = %v, want ErrReadOnly", err)
 		}
 	})
 }
@@ -1078,8 +1078,8 @@ func TestMockSandbox_WriteFileAtomic(t *testing.T) {
 		t.Parallel()
 		sandbox := NewMockSandbox("/sandbox", ModeReadOnly)
 		defer func() { _ = sandbox.Close() }()
-		if err := sandbox.WriteFileAtomic("test.txt", []byte("data"), 0644); !errors.Is(err, errReadOnly) {
-			t.Errorf("WriteFileAtomic() error = %v, want errReadOnly", err)
+		if err := sandbox.WriteFileAtomic("test.txt", []byte("data"), 0644); !errors.Is(err, ErrReadOnly) {
+			t.Errorf("WriteFileAtomic() error = %v, want ErrReadOnly", err)
 		}
 	})
 }
@@ -1189,8 +1189,8 @@ func TestMockSandbox_CreateTempReadOnly(t *testing.T) {
 	sandbox := NewMockSandbox("/sandbox", ModeReadOnly)
 	defer func() { _ = sandbox.Close() }()
 	_, err := sandbox.CreateTemp(".", "test-*")
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("CreateTemp() error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("CreateTemp() error = %v, want ErrReadOnly", err)
 	}
 }
 
@@ -1259,23 +1259,23 @@ func TestMockSandbox_OpenFile_ReadOnlyWriteFlags(t *testing.T) {
 	defer func() { _ = sandbox.Close() }()
 
 	_, err := sandbox.OpenFile("test.txt", flagWrite, 0644)
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("OpenFile(flagWrite) error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("OpenFile(flagWrite) error = %v, want ErrReadOnly", err)
 	}
 
 	_, err = sandbox.OpenFile("test.txt", flagReadWrite, 0644)
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("OpenFile(flagReadWrite) error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("OpenFile(flagReadWrite) error = %v, want ErrReadOnly", err)
 	}
 
 	_, err = sandbox.OpenFile("test.txt", flagAppend, 0644)
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("OpenFile(flagAppend) error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("OpenFile(flagAppend) error = %v, want ErrReadOnly", err)
 	}
 
 	_, err = sandbox.OpenFile("test.txt", flagTrunc, 0644)
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("OpenFile(flagTrunc) error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("OpenFile(flagTrunc) error = %v, want ErrReadOnly", err)
 	}
 }
 
@@ -1287,8 +1287,8 @@ func TestMockSandbox_Rename_ReadOnly(t *testing.T) {
 	sandbox.AddFile("old.txt", []byte("data"))
 
 	err := sandbox.Rename("old.txt", "new.txt")
-	if !errors.Is(err, errReadOnly) {
-		t.Errorf("Rename() error = %v, want errReadOnly", err)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("Rename() error = %v, want ErrReadOnly", err)
 	}
 }
 
